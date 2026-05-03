@@ -17,6 +17,9 @@ import numpy as np
 import io
 import math
 from typing import List, Dict
+# ── Import IA ────────────────────────────────────────────
+from moteur_apprentissage import moteur_apprentissage
+from moteur_ia_chat import moteur_ia_chat
 
 # ── Import Cerveau I ─────────────────────────────────────
 from moteur_cerveau1 import cerveau1 as oracle_brain
@@ -281,7 +284,7 @@ days = [int(re.search(r'\d+', k).group()) for k in st.session_state['history'][s
 next_j = max(days) + 1 if days else 1
 st.markdown(f'<div class="next-day-box">PROCHAINE JOURNÉE : J-{next_j}</div>', unsafe_allow_html=True)
 
-tabs = st.tabs(["🏆 CLASSEMENT", "📅 CALENDRIER", "🎯 PRONOS", "⚽ RÉSULTATS", "📚 HISTORIQUE", "⚙️ GESTION", "📊 PERFORMANCE"])
+tabs = st.tabs(["🏆 CLASSEMENT", "📅 CALENDRIER", "🎯 PRONOS", "⚽ RÉSULTATS", "📚 HISTORIQUE", "⚙️ GESTION", "📊 PERFORMANCE", "🤖 ASSISTANT IA"])
 
 # ===================== TAB 0 : CLASSEMENT =====================
 with tabs[0]:
@@ -467,7 +470,37 @@ with tabs[3]:
             save_db(st.session_state['history'])
             custom_notify("✅ Résultats enregistrés !", "#00FF00")
             st.rerun()
+# Dans le bloc "Enregistrer Résultats", après save_db() :
+# ── Apprentissage ──
+for i, m in enumerate(final_res):
+    try:
+        sh, sa = map(int, m['s'].replace('-', ':').split(':'))
+        if sh > sa:
+            resultat = "1"
+        elif sh < sa:
+            resultat = "2"
+        else:
+            resultat = "X"
+        
+        # Récupère les cotes du calendrier
+        cotes = [2.0, 3.0, 3.0]  # Valeurs par défaut
+        if cal_ref and i < len(cal_ref):
+            cotes = cal_ref[i].get('o', [2.0, 3.0, 3.0])
+        
+        # Apprend le pattern de cotes
+        moteur_apprentissage.analyser_pattern_cotes(cotes[0], cotes[1], cotes[2], resultat)
+        
+        # Apprend pour chaque équipe
+        moteur_apprentissage.analyser_pattern_equipe(m['h'], "V" if resultat=="1" else ("N" if resultat=="X" else "D"), 
+                                                     {"domicile": True})
+        moteur_apprentissage.analyser_pattern_equipe(m['a'], "V" if resultat=="2" else ("N" if resultat=="X" else "D"), 
+                                                     {"domicile": False})
+        
+    except Exception as e:
+        pass
 
+moteur_apprentissage.save()
+custom_notify("🧠 IA : Patterns mis à jour !", "#7FFFD4")
 # ===================== TAB 4 : HISTORIQUE =====================
 with tabs[4]:
     st.markdown("### 📚 Historique des Journées")
@@ -516,6 +549,201 @@ with tabs[6]:
         st.progress(int(rating))
         st.markdown(f"<h2 style='color:{color};'>{rating:.1f} / 100</h2>", unsafe_allow_html=True)
 
+# ===================== TAB 7 : ASSISTANT IA =====================
+with tabs[7]:
+    st.markdown("""
+    <div class="main-header" style="padding: 15px; margin-bottom: 15px;">
+        <h2 style="color: #7FFFD4; margin: 0;">🤖 Assistant IA Oracle</h2>
+        <p style="color: #888; margin: 5px 0 0 0;">Analyse · Prédiction · Apprentissage</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Configuration API Groq
+    with st.expander("🔑 Configuration API Groq", expanded=not moteur_ia_chat.est_connecte()):
+        col1, col2 = st.columns([3, 1])
+        api_key = col1.text_input("Clé API Groq", 
+                                  value=os.environ.get("GROQ_API_KEY", ""),
+                                  type="password",
+                                  placeholder="gsk_...")
+        if col2.button("💾 Sauvegarder", use_container_width=True):
+            os.environ["GROQ_API_KEY"] = api_key
+            # Recharge le client
+            if GROQ_DISPONIBLE and api_key:
+                try:
+                    moteur_ia_chat.client = Groq(api_key=api_key)
+                    moteur_ia_chat.api_key = api_key
+                    custom_notify("✅ API Groq configurée !", "#00FF00")
+                except Exception as e:
+                    st.error(f"Erreur : {e}")
+            st.rerun()
+        
+        st.markdown("""
+        <small style="color: #888;">
+        📝 Obtenez une clé gratuite sur <a href="https://console.groq.com" target="_blank">console.groq.com</a><br>
+        💡 Sans clé, l'IA fonctionne en mode offline avec les patterns appris.
+        </small>
+        """, unsafe_allow_html=True)
+    
+    # Status
+    status_col1, status_col2, status_col3 = st.columns(3)
+    with status_col1:
+        if moteur_ia_chat.est_connecte():
+            st.success("🟢 IA Avancée Connectée")
+        else:
+            st.warning("🟡 Mode Offline")
+    with status_col2:
+        stats = moteur_apprentissage.get_stats_apprentissage()
+        st.info(f"📊 {stats['total']} matchs analysés")
+    with status_col3:
+        st.info(f"🎯 {stats['taux_reussite']}% réussite")
+    
+    st.divider()
+    
+    # Zone de chat
+    st.markdown("### 💬 Discuter avec l'Oracle")
+    
+    # Historique
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+    
+    # Affiche l'historique
+    for msg in st.session_state.chat_messages:
+        if msg["role"] == "user":
+            st.markdown(f"""
+            <div style="background: rgba(127,255,212,0.1); border-left: 3px solid #7FFFD4; 
+                        padding: 10px 15px; margin: 5px 0 5px 40px; border-radius: 10px;">
+                <b>👤 Vous</b><br>{msg['content']}
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            source_color = "#00FF00" if msg.get("source") == "groq" else "#FFA500"
+            source_text = "🧠 Groq" if msg.get("source") == "groq" else "🤖 Offline"
+            st.markdown(f"""
+            <div style="background: rgba(255,255,255,0.05); border-left: 3px solid {source_color}; 
+                        padding: 10px 15px; margin: 5px 40px 5px 0; border-radius: 10px;">
+                <b>🔮 Oracle</b> <span style="color: {source_color}; font-size: 0.8em;">[{source_text}]</span>
+                <br>{msg['content']}
+            </div>
+            """, unsafe_allow_html=True)
+    
+    # Saisie
+    with st.form("chat_form", clear_on_submit=True):
+        user_input = st.text_input("Votre message...", 
+                                   placeholder="Ex: Analyse Liverpool vs Manchester City",
+                                   label_visibility="collapsed")
+        cols = st.columns([1, 1, 4])
+        with cols[0]:
+            envoyer = st.form_submit_button("📤 Envoyer", use_container_width=True)
+        with cols[1]:
+            if st.form_submit_button("🗑️ Effacer", use_container_width=True):
+                st.session_state.chat_messages = []
+                st.rerun()
+    
+    if envoyer and user_input.strip():
+        # Ajoute le message utilisateur
+        st.session_state.chat_messages.append({"role": "user", "content": user_input})
+        
+        # Met à jour le contexte
+        standings = get_standings(st.session_state['history'][s_active], engine.teams_list)
+        moteur_ia_chat.set_contexte(
+            history=st.session_state['history'],
+            saison_active=s_active,
+            standings=standings,
+            prochaine_journee=next_j
+        )
+        
+        # Obtient la réponse
+        with st.spinner("L'Oracle réfléchit..."):
+            reponse = moteur_ia_chat.discuter(user_input)
+        
+        # Ajoute la réponse
+        st.session_state.chat_messages.append({
+            "role": "assistant", 
+            "content": reponse["texte"],
+            "source": reponse["source"],
+            "confiance": reponse.get("confiance", 0)
+        })
+        
+        st.rerun()
+    
+    # Suggestions rapides
+    st.divider()
+    st.markdown("#### ⚡ Questions rapides")
+    suggestions = [
+        "Analyse la forme de Liverpool",
+        "Quels sont les patterns découverts ?",
+        "Pronostic pour la prochaine journée",
+        "Stats de l'IA",
+        "Qui est favori selon les cotes ?"
+    ]
+    
+    sugg_cols = st.columns(len(suggestions))
+    for i, sugg in enumerate(suggestions):
+        with sugg_cols[i]:
+            if st.button(sugg, key=f"sugg_{i}", use_container_width=True):
+                st.session_state.chat_messages.append({"role": "user", "content": sugg})
+                
+                standings = get_standings(st.session_state['history'][s_active], engine.teams_list)
+                moteur_ia_chat.set_contexte(
+                    history=st.session_state['history'],
+                    saison_active=s_active,
+                    standings=standings,
+                    prochaine_journee=next_j
+                )
+                
+                with st.spinner("Analyse..."):
+                    reponse = moteur_ia_chat.discuter(sugg)
+                
+                st.session_state.chat_messages.append({
+                    "role": "assistant",
+                    "content": reponse["texte"],
+                    "source": reponse["source"]
+                })
+                st.rerun()
+    
+    # Section apprentissage
+    st.divider()
+    st.markdown("### 🧠 Centre d'Apprentissage")
+    
+    app_col1, app_col2 = st.columns(2)
+    
+    with app_col1:
+        st.markdown("#### 📊 Patterns de Cotes")
+        if moteur_apprentissage.patterns:
+            pattern_data = []
+            for p, d in moteur_apprentissage.patterns.items():
+                if isinstance(d, dict) and "total" in d and d["total"] >= 2:
+                    pattern_data.append({
+                        "Pattern": p,
+                        "Total": d["total"],
+                        "1": f"{d.get('1',0)} ({d.get('1',0)/d['total']*100:.0f}%)",
+                        "X": f"{d.get('X',0)} ({d.get('X',0)/d['total']*100:.0f}%)",
+                        "2": f"{d.get('2',0)} ({d.get('2',0)/d['total']*100:.0f}%)"
+                    })
+            if pattern_data:
+                st.dataframe(pd.DataFrame(pattern_data), use_container_width=True, hide_index=True)
+            else:
+                st.info("Pas assez de données. Jouez plus de matchs !")
+        else:
+            st.info("Aucun pattern encore découvert.")
+    
+    with app_col2:
+        st.markdown("#### ⚖️ Poids des Facteurs")
+        poids_df = pd.DataFrame([
+            {"Facteur": k.replace("_", " ").title(), "Poids": f"{v:.3f}"}
+            for k, v in moteur_apprentissage.poids.items()
+        ])
+        st.dataframe(poids_df, use_container_width=True, hide_index=True)
+        
+        if st.button("🔄 Réinitialiser les poids"):
+            moteur_apprentissage.poids = moteur_apprentissage._init_poids()
+            moteur_apprentissage.save()
+            custom_notify("Poids réinitialisés !", "#FFA500")
+            st.rerun()
+    
+    # Rapport complet
+    with st.expander("📋 Rapport Complet d'Apprentissage"):
+        st.text(moteur_apprentissage.generer_rapport_patterns())
 # ===================== Sauvegarde Globale =====================
 if st.button("💾 Sauvegarder tout maintenant"):
     save_db(st.session_state['history'])

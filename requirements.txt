@@ -3,3 +3,6 @@ easyocr
 pandas
 matplotlib
 opencv-python-headless
+pillow
+numpy
+groq
